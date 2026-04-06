@@ -902,6 +902,12 @@ public class Automaton implements Accountable, TransitionAccessor {
       return nextState;
     }
 
+    /** Estimated RAM used by the backing transitions array. */
+    long getTransitionsArrayRamBytes() {
+      return RamUsageEstimator.alignObjectSize(
+          (long) transitions.length * Integer.BYTES + RamUsageEstimator.NUM_BYTES_ARRAY_HEADER);
+    }
+
     /** Copies over all states/transitions from other. */
     public void copy(Automaton other) {
       int offset = getNumStates();

@@ -26,6 +26,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import org.apache.lucene.tests.util.LuceneTestCase;
 import org.apache.lucene.tests.util.TestUtil;
 import org.apache.lucene.tests.util.automaton.AutomatonTestUtil;
@@ -1701,6 +1702,98 @@ public class TestAutomaton extends LuceneTestCase {
           a = Operations.reverse(a);
           Operations.determinize(a, Operations.DEFAULT_DETERMINIZE_WORK_LIMIT);
         });
+  }
+
+  public void testDeterminizeProgressCallback() {
+    Automaton nfa = buildNonDeterministicAutomaton();
+    assertFalse(nfa.isDeterministic());
+
+    AtomicLong totalBytes = new AtomicLong();
+    int[] callCount = new int[1];
+
+    Automaton dfa =
+        Operations.determinize(
+            nfa,
+            DEFAULT_DETERMINIZE_WORK_LIMIT,
+            bytes -> {
+              assertTrue("estimated bytes must be positive", bytes > 0);
+              totalBytes.addAndGet(bytes);
+              callCount[0]++;
+            });
+
+    assertTrue(dfa.isDeterministic());
+    assertTrue("callback should have been invoked at least once", callCount[0] > 0);
+    assertTrue("total estimated bytes should be positive", totalBytes.get() > 0);
+
+    // Verify the result is equivalent: determinizing with and without callback produces same
+    // language
+    Automaton dfaWithout = Operations.determinize(nfa, DEFAULT_DETERMINIZE_WORK_LIMIT);
+    assertTrue(AutomatonTestUtil.sameLanguage(dfa, dfaWithout));
+  }
+
+  public void testDeterminizeProgressCallbackAbort() {
+    Automaton nfa = buildNonDeterministicAutomaton();
+    assertFalse(nfa.isDeterministic());
+
+    RuntimeException abortException =
+        expectThrows(
+            RuntimeException.class,
+            () -> {
+              Operations.determinize(
+                  nfa,
+                  DEFAULT_DETERMINIZE_WORK_LIMIT,
+                  _ -> {
+                    throw new RuntimeException("memory limit exceeded");
+                  });
+            });
+    assertEquals("memory limit exceeded", abortException.getMessage());
+  }
+
+  public void testDeterminizeProgressCallbackNull() {
+    Automaton nfa = buildNonDeterministicAutomaton();
+    Automaton dfaWithNull = Operations.determinize(nfa, DEFAULT_DETERMINIZE_WORK_LIMIT, null);
+    Automaton dfaWithout = Operations.determinize(nfa, DEFAULT_DETERMINIZE_WORK_LIMIT);
+    assertTrue(dfaWithNull.isDeterministic());
+    assertTrue(AutomatonTestUtil.sameLanguage(dfaWithNull, dfaWithout));
+  }
+
+  public void testDeterminizeProgressCallbackNotCalledWhenAlreadyDeterministic() {
+    Automaton dfa = Automata.makeString("hello");
+    assertTrue(dfa.isDeterministic());
+
+    Automaton result =
+        Operations.determinize(
+            dfa,
+            DEFAULT_DETERMINIZE_WORK_LIMIT,
+            _ -> {
+              fail("callback should not be invoked for an already-deterministic automaton");
+            });
+    assertSame(dfa, result);
+
+    // Also test single-state automaton
+    Automaton singleState = Automata.makeChar('x');
+    assertTrue(singleState.getNumStates() <= 2);
+    Automaton singleResult =
+        Operations.determinize(
+            singleState,
+            DEFAULT_DETERMINIZE_WORK_LIMIT,
+            _ -> {
+              fail("callback should not be invoked for a trivial automaton");
+            });
+    assertTrue(singleResult.isDeterministic());
+  }
+
+  private static Automaton buildNonDeterministicAutomaton() {
+    Automaton automaton = new Automaton();
+    int start = automaton.createState();
+    int left = automaton.createState();
+    int right = automaton.createState();
+    automaton.setAccept(left, true);
+    automaton.setAccept(right, true);
+    automaton.addTransition(start, left, 'a');
+    automaton.addTransition(start, right, 'a');
+    automaton.finishState();
+    return automaton;
   }
 
   public void testMakeCharSetEmpty() {

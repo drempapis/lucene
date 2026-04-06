@@ -37,6 +37,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.LongConsumer;
 import org.apache.lucene.internal.hppc.BitMixer;
 import org.apache.lucene.internal.hppc.IntCursor;
 import org.apache.lucene.internal.hppc.IntHashSet;
@@ -61,6 +62,8 @@ public final class Operations {
    * throwing {@link TooComplexToDeterminizeException}.
    */
   public static final int DEFAULT_DETERMINIZE_WORK_LIMIT = 10000;
+
+  private static final long DETERMINIZE_PROGRESS_REPORT_BYTES = 16L * 1024;
 
   private Operations() {}
 
@@ -651,6 +654,33 @@ public final class Operations {
    *     "effort"
    */
   public static Automaton determinize(Automaton a, int workLimit) {
+    return determinize(a, workLimit, null);
+  }
+
+  /**
+   * Determinizes the given automaton, optionally reporting estimated memory usage to a callback.
+   *
+   * <p>Worst case complexity: exponential in number of states.
+   *
+   * <p>The memory values reported to {@code progressCallback} are best-effort estimates, not exact
+   * accounting. They are intended for coarse-grained safety controls (for example circuit breakers)
+   * and may under- or over-estimate real heap usage.
+   *
+   * @param workLimit Maximum amount of "work" that the powerset construction will spend before
+   *     throwing {@link TooComplexToDeterminizeException}. Higher numbers allow this operation to
+   *     consume more memory and CPU but allow more complex automatons. Use {@link
+   *     #DEFAULT_DETERMINIZE_WORK_LIMIT} as a decent default if you don't otherwise know what to
+   *     specify.
+   * @param progressCallback If non-null, this callback is invoked periodically with an accumulated
+   *     <em>estimated</em> number of bytes for newly created DFA states (including the {@link
+   *     FrozenIntSet}, {@code HashMap} entry, and worklist slot) and backing transition array
+   *     growth inside {@link Automaton.Builder}. Any remaining bytes below the reporting threshold
+   *     are sent once at the end. The callback may throw a {@link RuntimeException} to abort
+   *     determinization early (e.g. to enforce a memory limit).
+   * @throws TooComplexToDeterminizeException if determinizing requires more than {@code workLimit}
+   *     "effort"
+   */
+  public static Automaton determinize(Automaton a, int workLimit, LongConsumer progressCallback) {
     if (a.isDeterministic()) {
       // Already determinized
       return a;
@@ -693,6 +723,9 @@ public final class Operations {
     // LUCENE-9981: approximate conversion from what used to be a limit on number of states, to
     // maximum "effort":
     long effortLimit = workLimit * (long) 10;
+    long pendingEstimatedBytes = 0;
+    long lastBuilderTransitionsArrayRamBytes =
+        progressCallback == null ? 0 : b.getTransitionsArrayRamBytes();
 
     while (worklist.size() > 0) {
       // TODO (LUCENE-9983): these int sets really do not need to be sorted, and we are paying
@@ -747,6 +780,13 @@ public final class Operations {
             worklist.add(p);
             b.setAccept(q, accCount > 0);
             newstate.put(p, q);
+            if (progressCallback != null) {
+              pendingEstimatedBytes += estimateDeterminizeStateRamBytes(p);
+              if (pendingEstimatedBytes >= DETERMINIZE_PROGRESS_REPORT_BYTES) {
+                progressCallback.accept(pendingEstimatedBytes);
+                pendingEstimatedBytes = 0;
+              }
+            }
           } else {
             assert (accCount > 0 ? true : false) == b.isAccept(q)
                 : "accCount="
@@ -761,6 +801,18 @@ public final class Operations {
           // max=" + (point-1));
 
           b.addTransition(r, q, lastPoint, point - 1);
+          if (progressCallback != null) {
+            long builderTransitionsArrayRamBytes = b.getTransitionsArrayRamBytes();
+            if (builderTransitionsArrayRamBytes > lastBuilderTransitionsArrayRamBytes) {
+              pendingEstimatedBytes +=
+                  builderTransitionsArrayRamBytes - lastBuilderTransitionsArrayRamBytes;
+              lastBuilderTransitionsArrayRamBytes = builderTransitionsArrayRamBytes;
+              if (pendingEstimatedBytes >= DETERMINIZE_PROGRESS_REPORT_BYTES) {
+                progressCallback.accept(pendingEstimatedBytes);
+                pendingEstimatedBytes = 0;
+              }
+            }
+          }
         }
 
         // process transitions that end on this point
@@ -790,9 +842,48 @@ public final class Operations {
       assert statesSet.size() == 0 : "size=" + statesSet.size();
     }
 
+    if (progressCallback != null && pendingEstimatedBytes > 0) {
+      progressCallback.accept(pendingEstimatedBytes);
+    }
+
     Automaton result = b.finish();
     assert result.isDeterministic();
     return result;
+  }
+
+  /**
+   * Returns a best-effort, per-state RAM estimate used only for progress reporting.
+   *
+   * <p>This estimate is intentionally coarse and should not be interpreted as exact JVM heap
+   * accounting.
+   */
+  private static long estimateDeterminizeStateRamBytes(FrozenIntSet frozenState) {
+    // FrozenIntSet shallow: header + int[] ref + long hashCode + int state
+    long frozenIntSetShallow =
+        RamUsageEstimator.NUM_BYTES_OBJECT_HEADER
+            + RamUsageEstimator.NUM_BYTES_OBJECT_REF
+            + Long.BYTES
+            + Integer.BYTES;
+
+    // int[] backing the frozen set
+    long intArrayBytes =
+        RamUsageEstimator.alignObjectSize(
+            (long) Integer.BYTES * frozenState.values.length
+                + RamUsageEstimator.NUM_BYTES_ARRAY_HEADER);
+
+    // HashMap.Node: header + int hash + 3 refs (key, value, next)
+    // + boxed Integer: header + int value
+    long mapEntryBytes =
+        RamUsageEstimator.NUM_BYTES_OBJECT_HEADER
+            + Integer.BYTES
+            + 3 * RamUsageEstimator.NUM_BYTES_OBJECT_REF
+            + RamUsageEstimator.NUM_BYTES_OBJECT_HEADER
+            + Integer.BYTES;
+
+    // ArrayDeque slot (one object reference, amortized)
+    long dequeSlotBytes = RamUsageEstimator.NUM_BYTES_OBJECT_REF;
+
+    return frozenIntSetShallow + intArrayBytes + mapEntryBytes + dequeSlotBytes;
   }
 
   /** Returns true if the given automaton accepts no strings. */
