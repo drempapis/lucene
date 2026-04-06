@@ -7,6 +7,10 @@ http://s.apache.org/luceneversions
 
 API Changes
 ---------------------
+* GITHUB#15937: Add Operations.determinize overload accepting a LongConsumer progress callback,
+  invoked with estimated memory cost each time a new DFA state is created during powerset
+  construction. This allows callers to monitor or limit memory growth during determinization.
+  (Dimitris Rempapis)
 
 * GITHUB#15763: Deprecate Operations.complement() method. This operation can be slow and is not
   recommended for production use. It will be removed in Lucene 12. (Saurabh Singh)
