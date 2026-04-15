@@ -81,7 +81,7 @@ API Changes
   To force a classic DFA execution, use Operations.determinize() and AutomatonQuery.
   (Dimitris Rempapis)
 
-* GITHUB#XXXX: Removed WildcardQuery constructor overloads that exposed determinization controls
+* GITHUB#15961: Removed WildcardQuery constructor overloads that exposed determinization controls
   (determinizeWorkLimit). Determinization is now done only as-needed.
   To force a classic DFA execution, use Operations.determinize() and AutomatonQuery.
   Also removed QueryParserBase.setDeterminizeWorkLimit/getDeterminizeWorkLimit, which are
