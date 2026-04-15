@@ -409,8 +409,8 @@ public class NFARunAutomaton implements ByteRunnable, TransitionAccessor, Accoun
             assert transitions[charClass] == NOT_COMPUTED || transitions[charClass] == ord;
             assignTransition(charClass++, ord);
           }
-          // This invariant does not always hold with partially precomputed classes.
-          // The subsequent transition processing remains correct regardless.
+          assert (charClass == points.length && point == alphabetSize)
+              || points[charClass] == point;
         }
 
         // process transitions that end on this point
