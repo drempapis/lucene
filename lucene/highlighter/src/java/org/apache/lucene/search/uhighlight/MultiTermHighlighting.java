@@ -27,6 +27,7 @@ import org.apache.lucene.search.FuzzyQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.QueryVisitor;
 import org.apache.lucene.util.automaton.ByteRunAutomaton;
+import org.apache.lucene.util.automaton.ByteRunnable;
 
 /**
  * Support for highlighting multi-term queries.
@@ -82,6 +83,12 @@ final class MultiTermHighlighting {
     @Override
     public void consumeTermsMatching(
         Query query, String field, Supplier<ByteRunAutomaton> automaton) {
+      runAutomata.add(LabelledCharArrayMatcher.wrap(query.toString(), automaton.get()));
+    }
+
+    @Override
+    public void consumeTermsMatchingRunnable(
+        Query query, String field, Supplier<ByteRunnable> automaton) {
       runAutomata.add(LabelledCharArrayMatcher.wrap(query.toString(), automaton.get()));
     }
   }

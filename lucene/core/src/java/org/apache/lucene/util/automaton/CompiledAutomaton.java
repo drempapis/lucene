@@ -254,7 +254,7 @@ public class CompiledAutomaton implements Accountable {
       this.automaton = null;
       this.runAutomaton = null;
       this.sinkState = -1;
-      this.nfaRunAutomaton = new NFARunAutomaton(binary, 0xff);
+      this.nfaRunAutomaton = new NFARunAutomaton(binary, 0x100);
     } else {
       // We already had a DFA (or threw exception), according to mike UTF32toUTF8 won't "blow up"
       binary = Operations.determinize(binary, Integer.MAX_VALUE);
@@ -366,7 +366,7 @@ public class CompiledAutomaton implements Accountable {
     if (visitor.acceptField(field)) {
       switch (type) {
         case NORMAL:
-          visitor.consumeTermsMatching(parent, field, () -> runAutomaton);
+          visitor.consumeTermsMatchingRunnable(parent, field, this::getByteRunnable);
           break;
         case NONE:
           break;
@@ -509,8 +509,7 @@ public class CompiledAutomaton implements Accountable {
   public int hashCode() {
     final int prime = 31;
     int result = 1;
-    result = prime * result + ((runAutomaton == null) ? 0 : runAutomaton.hashCode());
-    result = prime * result + ((nfaRunAutomaton == null) ? 0 : nfaRunAutomaton.hashCode());
+    result = prime * result + normalAutomatonHashCode();
     result = prime * result + ((term == null) ? 0 : term.hashCode());
     result = prime * result + ((type == null) ? 0 : type.hashCode());
     return result;
@@ -526,11 +525,32 @@ public class CompiledAutomaton implements Accountable {
     if (type == AUTOMATON_TYPE.SINGLE) {
       if (!term.equals(other.term)) return false;
     } else if (type == AUTOMATON_TYPE.NORMAL) {
-      return Objects.equals(runAutomaton, other.runAutomaton)
-          && Objects.equals(nfaRunAutomaton, other.nfaRunAutomaton);
+      return normalAutomatonEquals(other);
     }
 
     return true;
+  }
+
+  private int normalAutomatonHashCode() {
+    if (runAutomaton != null) {
+      return runAutomaton.hashCode();
+    }
+    if (nfaRunAutomaton != null) {
+      return AutomatonStructuralComparator.structuralAutomatonHashCode(
+          nfaRunAutomaton.getAutomaton());
+    }
+    return 0;
+  }
+
+  private boolean normalAutomatonEquals(CompiledAutomaton other) {
+    if (runAutomaton != null || other.runAutomaton != null) {
+      return Objects.equals(runAutomaton, other.runAutomaton);
+    }
+    if (nfaRunAutomaton != null && other.nfaRunAutomaton != null) {
+      return AutomatonStructuralComparator.structuralAutomatonEquals(
+          nfaRunAutomaton.getAutomaton(), other.nfaRunAutomaton.getAutomaton());
+    }
+    return Objects.equals(nfaRunAutomaton, other.nfaRunAutomaton);
   }
 
   @Override
