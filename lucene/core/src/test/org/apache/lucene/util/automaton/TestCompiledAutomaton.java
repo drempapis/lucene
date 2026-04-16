@@ -237,29 +237,23 @@ public class TestCompiledAutomaton extends LuceneTestCase {
     assertNotEquals(nfa, dfa);
   }
 
-  public void testVisitUsesRunnableCallbackForNfaAutomaton() {
+  public void testVisitUsesMatchingCallbackForNfaAutomaton() {
     CompiledAutomaton ca = new CompiledAutomaton(makeSimpleNfa('a'), false, true, true);
     Query parent = new TermQuery(new Term("f", "x"));
 
-    final boolean[] runnableCalled = new boolean[1];
+    final boolean[] matchingCalled = new boolean[1];
     QueryVisitor visitor =
         new QueryVisitor() {
           @Override
-          public void consumeTermsMatchingRunnable(
-              Query query, String field, Supplier<ByteRunnable> automaton) {
-            runnableCalled[0] = true;
-            assertNotNull(automaton.get());
-          }
-
-          @Override
           public void consumeTermsMatching(
-              Query query, String field, Supplier<ByteRunAutomaton> automaton) {
-            fail("Expected consumeTermsMatchingRunnable for NORMAL automata");
+              Query query, String field, Supplier<ByteRunnable> automaton) {
+            matchingCalled[0] = true;
+            assertNotNull(automaton.get());
           }
         };
 
     ca.visit(visitor, parent, "f");
-    assertTrue(runnableCalled[0]);
+    assertTrue(matchingCalled[0]);
   }
 
   private static Automaton makeSimpleNfa(char ch) {

@@ -366,7 +366,7 @@ public class CompiledAutomaton implements Accountable {
     if (visitor.acceptField(field)) {
       switch (type) {
         case NORMAL:
-          visitor.consumeTermsMatchingRunnable(parent, field, this::getByteRunnable);
+          visitor.consumeTermsMatching(parent, field, this::getByteRunnable);
           break;
         case NONE:
           break;

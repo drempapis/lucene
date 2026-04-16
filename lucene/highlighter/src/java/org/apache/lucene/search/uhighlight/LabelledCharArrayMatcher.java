@@ -18,7 +18,6 @@
 package org.apache.lucene.search.uhighlight;
 
 import org.apache.lucene.util.UnicodeUtil;
-import org.apache.lucene.util.automaton.ByteRunAutomaton;
 import org.apache.lucene.util.automaton.ByteRunnable;
 
 /**
@@ -47,11 +46,6 @@ public interface LabelledCharArrayMatcher extends CharArrayMatcher {
         return in.match(s, offset, length);
       }
     };
-  }
-
-  /** Returns a representation of the automaton that matches char[] instead of byte[] */
-  static LabelledCharArrayMatcher wrap(String label, ByteRunAutomaton runAutomaton) {
-    return wrap(label, (ByteRunnable) runAutomaton);
   }
 
   /** Returns a representation of the automaton that matches char[] instead of byte[] */
