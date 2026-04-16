@@ -509,7 +509,8 @@ public class CompiledAutomaton implements Accountable {
   public int hashCode() {
     final int prime = 31;
     int result = 1;
-    result = prime * result + normalAutomatonHashCode();
+    result = prime * result + ((runAutomaton == null) ? 0 : runAutomaton.hashCode());
+    result = prime * result + ((nfaRunAutomaton == null) ? 0 : nfaRunAutomaton.hashCode());
     result = prime * result + ((term == null) ? 0 : term.hashCode());
     result = prime * result + ((type == null) ? 0 : type.hashCode());
     return result;
@@ -525,32 +526,11 @@ public class CompiledAutomaton implements Accountable {
     if (type == AUTOMATON_TYPE.SINGLE) {
       if (!term.equals(other.term)) return false;
     } else if (type == AUTOMATON_TYPE.NORMAL) {
-      return normalAutomatonEquals(other);
+      return Objects.equals(runAutomaton, other.runAutomaton)
+          && Objects.equals(nfaRunAutomaton, other.nfaRunAutomaton);
     }
 
     return true;
-  }
-
-  private int normalAutomatonHashCode() {
-    if (runAutomaton != null) {
-      return runAutomaton.hashCode();
-    }
-    if (nfaRunAutomaton != null) {
-      return AutomatonStructuralComparator.structuralAutomatonHashCode(
-          nfaRunAutomaton.getAutomaton());
-    }
-    return 0;
-  }
-
-  private boolean normalAutomatonEquals(CompiledAutomaton other) {
-    if (runAutomaton != null || other.runAutomaton != null) {
-      return Objects.equals(runAutomaton, other.runAutomaton);
-    }
-    if (nfaRunAutomaton != null && other.nfaRunAutomaton != null) {
-      return AutomatonStructuralComparator.structuralAutomatonEquals(
-          nfaRunAutomaton.getAutomaton(), other.nfaRunAutomaton.getAutomaton());
-    }
-    return Objects.equals(nfaRunAutomaton, other.nfaRunAutomaton);
   }
 
   @Override
