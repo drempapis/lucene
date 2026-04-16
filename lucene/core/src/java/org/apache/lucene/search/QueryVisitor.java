@@ -51,22 +51,6 @@ public abstract class QueryVisitor {
   }
 
   /**
-   * Called by leaf queries that match on a class of terms.
-   *
-   * <p>Unlike {@link #consumeTermsMatching(Query, String, Supplier)}, this method accepts a
-   * runnable automaton and can represent both deterministic and non-deterministic automata.
-   *
-   * @param query the leaf query
-   * @param field the field queried against
-   * @param automaton a supplier for a runnable automaton defining which terms match
-   * @lucene.experimental
-   */
-  public void consumeTermsMatchingRunnable(
-      Query query, String field, Supplier<ByteRunnable> automaton) {
-    visitLeaf(query); // default impl for backward compatibility
-  }
-
-  /**
    * Called by leaf queries that do not match on terms
    *
    * @param query the query
