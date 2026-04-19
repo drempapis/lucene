@@ -186,6 +186,10 @@ Automaton dfa = Operations.determinize(WildcardQuery.toAutomaton(new Term("myfie
 Query query = new AutomatonQuery(new Term("myfield", pattern), dfa);
 ```
 
+### CollectionStatistics and TermStatistics have been renamed to FieldStats and TermStats (GITHUB#15929)
+
+Corresponding methods and parameters have been renamed accordingly.
+
 ## Migration from Lucene 10.4 to Lucene 10.5
 
 ### `[Byte|Float]VectorSimilarityQuery` now performs adaptive HNSW graph traversal
