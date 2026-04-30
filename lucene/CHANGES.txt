@@ -75,6 +75,8 @@ API Changes
 
 * GITHUB#15295 : Switched to a fixed CFS threshold (Shubham Sharma)
 
+* GITHUB#15486: Change TopGroups.merge() to accept a list of TopGroups (Binlong Gao)
+
 * GITHUB#15627 : Deferred lambda in TermStates.java according to prefetch (Shubham Sharma)
 
 * GITHUB#15939: Removed RegexpQuery constructor overloads that exposed determinization controls
