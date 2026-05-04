@@ -364,8 +364,11 @@ public final class FuzzyTermsEnum extends BaseTermsEnum {
    * on the query because this can blow up caches that use queries as keys; we also don't want to
    * rebuild them for every segment. This attribute allows the FuzzyTermsEnum to build the automata
    * once for its first segment and then share them for subsequent segment calls.
+   *
+   * <p>Package-private so that {@link FuzzyQuery#computeAutomataRamBytes(AttributeSource)} can
+   * reuse the same sharing mechanism.
    */
-  private interface AutomatonAttribute extends Attribute {
+  interface AutomatonAttribute extends Attribute {
     CompiledAutomaton[] getAutomata();
 
     int getTermLength();
@@ -373,7 +376,7 @@ public final class FuzzyTermsEnum extends BaseTermsEnum {
     void init(Supplier<FuzzyAutomatonBuilder> builder);
   }
 
-  private static class AutomatonAttributeImpl extends AttributeImpl implements AutomatonAttribute {
+  static class AutomatonAttributeImpl extends AttributeImpl implements AutomatonAttribute {
 
     private CompiledAutomaton[] automata;
     private int termLength;

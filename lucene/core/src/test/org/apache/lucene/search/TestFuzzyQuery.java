@@ -24,15 +24,23 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.MultiReader;
+import org.apache.lucene.index.NoMergePolicy;
 import org.apache.lucene.index.StoredFields;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.similarities.ClassicSimilarity;
 import org.apache.lucene.store.Directory;
@@ -41,10 +49,13 @@ import org.apache.lucene.tests.analysis.MockTokenizer;
 import org.apache.lucene.tests.index.RandomIndexWriter;
 import org.apache.lucene.tests.util.LuceneTestCase;
 import org.apache.lucene.tests.util.TestUtil;
+import org.apache.lucene.util.AttributeSource;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.IntsRef;
+import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.automaton.ByteRunnable;
+import org.apache.lucene.util.automaton.CompiledAutomaton;
 import org.apache.lucene.util.automaton.LevenshteinAutomata;
 
 /** Tests {@link FuzzyQuery}. */
@@ -574,6 +585,252 @@ public class TestFuzzyQuery extends LuceneTestCase {
               new FuzzyQuery(new Term("field", "foo"), 1, 0, -1, false);
             });
     assertTrue(expected.getMessage().contains("maxExpansions must be positive"));
+  }
+
+  public void testRamBytesUsedIsStableAndBoundedToRetainedState() throws Exception {
+    FuzzyQuery q = new FuzzyQuery(new Term("field", "hello"), 2);
+    long expected =
+        RamUsageEstimator.shallowSizeOfInstance(FuzzyQuery.class) + q.getTerm().ramBytesUsed();
+    assertEquals(
+        "ramBytesUsed must equal shallow size of FuzzyQuery + term.ramBytesUsed()",
+        expected,
+        q.ramBytesUsed());
+    assertEquals("ramBytesUsed must be stable across reads", expected, q.ramBytesUsed());
+
+    Directory directory = newDirectory();
+    RandomIndexWriter writer = new RandomIndexWriter(random(), directory);
+    addDoc("hello", writer);
+    addDoc("world", writer);
+    IndexReader reader = writer.getReader();
+    IndexSearcher searcher = newSearcher(reader);
+    writer.close();
+
+    searcher.search(q, 10);
+
+    assertEquals("ramBytesUsed must not change after a search", expected, q.ramBytesUsed());
+    searcher.search(q, 10);
+    assertEquals("ramBytesUsed must not change after a second search", expected, q.ramBytesUsed());
+
+    reader.close();
+    directory.close();
+  }
+
+  public void testRamBytesUsedNotAffectedByVisitOrSearch() throws Exception {
+    FuzzyQuery q = new FuzzyQuery(new Term("field", "hello"), 2);
+    long before = q.ramBytesUsed();
+
+    q.visit(QueryVisitor.EMPTY_VISITOR);
+    assertEquals("visit() must not affect ramBytesUsed", before, q.ramBytesUsed());
+
+    Directory directory = newDirectory();
+    RandomIndexWriter writer = new RandomIndexWriter(random(), directory);
+    addDoc("hello", writer);
+    IndexReader reader = writer.getReader();
+    IndexSearcher searcher = newSearcher(reader);
+    writer.close();
+
+    searcher.search(q, 10);
+    assertEquals("search() must not affect ramBytesUsed", before, q.ramBytesUsed());
+
+    reader.close();
+    directory.close();
+  }
+
+  public void testComputeAutomataRamBytesMaxEditsZero() {
+    FuzzyQuery q = new FuzzyQuery(new Term("field", "hello"), 0);
+    assertEquals(
+        "maxEdits=0 has no automata to count",
+        0L,
+        q.computeAutomataRamBytes(new AttributeSource()));
+  }
+
+  public void testComputeAutomataRamBytesPositive() {
+    FuzzyQuery q = new FuzzyQuery(new Term("field", "hello"), 2);
+    long withAtts = q.computeAutomataRamBytes(new AttributeSource());
+    assertTrue("expected a positive automata cost, got " + withAtts, withAtts > 0L);
+  }
+
+  public void testComputeAutomataRamBytesGrowsWithMaxEdits() {
+    FuzzyQuery q1 = new FuzzyQuery(new Term("field", "hello"), 1);
+    FuzzyQuery q2 = new FuzzyQuery(new Term("field", "hello"), 2);
+    long r1 = q1.computeAutomataRamBytes(new AttributeSource());
+    long r2 = q2.computeAutomataRamBytes(new AttributeSource());
+    assertTrue(
+        "q2.computeAutomataRamBytes ("
+            + r2
+            + ") should exceed q1.computeAutomataRamBytes ("
+            + r1
+            + ")",
+        r2 > r1);
+  }
+
+  public void testComputeAutomataRamBytesDoesNotMutateRamBytesUsed() {
+    FuzzyQuery q = new FuzzyQuery(new Term("field", "hello"), 2);
+    long before = q.ramBytesUsed();
+    q.computeAutomataRamBytes(new AttributeSource());
+    q.computeAutomataRamBytes(new AttributeSource());
+    assertEquals("computeAutomataRamBytes must not mutate ramBytesUsed", before, q.ramBytesUsed());
+  }
+
+  public void testComputeAutomataRamBytesSharesWithGetTermsEnum() throws Exception {
+    Directory directory = newDirectory();
+    RandomIndexWriter writer = new RandomIndexWriter(random(), directory);
+    addDoc("hello", writer);
+    addDoc("help", writer);
+    IndexReader reader = writer.getReader();
+    writer.close();
+
+    FuzzyQuery q = new FuzzyQuery(new Term("field", "hello"), 2);
+
+    // Measure first, then execute: the AttributeSource carries the pre-built automata to the
+    // FuzzyTermsEnum, which should reuse the same array instance (no rebuild).
+    AttributeSource atts = new AttributeSource();
+    long sum = q.computeAutomataRamBytes(atts);
+    assertTrue(sum > 0L);
+
+    FuzzyTermsEnum.AutomatonAttribute aa =
+        atts.getAttribute(FuzzyTermsEnum.AutomatonAttribute.class);
+    assertNotNull("AutomatonAttribute must be populated after computeAutomataRamBytes", aa);
+    CompiledAutomaton[] expected = aa.getAutomata();
+    assertNotNull(expected);
+
+    // Drive a FuzzyTermsEnum through the same attribute source; it must reuse the automata.
+    LeafReader leaf = reader.leaves().get(0).reader();
+    Terms terms = leaf.terms("field");
+    assertNotNull(terms);
+    new FuzzyTermsEnum(terms, atts, q.getTerm(), 2, 0, true);
+
+    assertSame(
+        "FuzzyTermsEnum must reuse the automata stored by computeAutomataRamBytes",
+        expected,
+        aa.getAutomata());
+    assertEquals(
+        "Calling computeAutomataRamBytes again on the same atts must not rebuild",
+        sum,
+        q.computeAutomataRamBytes(atts));
+    assertSame(
+        "Automata array identity must be preserved across repeat calls",
+        expected,
+        aa.getAutomata());
+
+    reader.close();
+    directory.close();
+  }
+
+  public void testComputeAutomataRamBytesDoesNotShareAcrossDifferentAttributeSources() {
+    FuzzyQuery q = new FuzzyQuery(new Term("field", "hello"), 2);
+
+    AttributeSource a = new AttributeSource();
+    AttributeSource b = new AttributeSource();
+
+    long sumA = q.computeAutomataRamBytes(a);
+    long sumB = q.computeAutomataRamBytes(b);
+    assertEquals(
+        "same query must report the same total across independent AttributeSources", sumA, sumB);
+
+    FuzzyTermsEnum.AutomatonAttribute aa = a.getAttribute(FuzzyTermsEnum.AutomatonAttribute.class);
+    FuzzyTermsEnum.AutomatonAttribute bb = b.getAttribute(FuzzyTermsEnum.AutomatonAttribute.class);
+    assertNotNull(aa);
+    assertNotNull(bb);
+    assertNotSame(
+        "Independent AttributeSources must hold independent automata arrays",
+        aa.getAutomata(),
+        bb.getAutomata());
+  }
+
+  public void testPreflightThenReuseAcrossSegments() throws Exception {
+    Directory directory = newDirectory();
+    IndexWriterConfig iwc = newIndexWriterConfig().setMergePolicy(NoMergePolicy.INSTANCE);
+    RandomIndexWriter writer = new RandomIndexWriter(random(), directory, iwc);
+    addDoc("hello", writer);
+    writer.commit();
+    addDoc("help", writer);
+    writer.commit();
+    addDoc("world", writer);
+    IndexReader reader = writer.getReader();
+    writer.close();
+    assumeTrue("need >= 2 segments for this test", reader.leaves().size() >= 2);
+
+    FuzzyQuery q = new FuzzyQuery(new Term("field", "hello"), 2);
+
+    AttributeSource atts = new AttributeSource();
+    long preflightBytes = q.computeAutomataRamBytes(atts);
+    assertTrue(preflightBytes > 0L);
+
+    CompiledAutomaton[] expected =
+        atts.getAttribute(FuzzyTermsEnum.AutomatonAttribute.class).getAutomata();
+    assertNotNull(expected);
+
+    for (LeafReaderContext ctx : reader.leaves()) {
+      Terms terms = ctx.reader().terms("field");
+      assertNotNull(terms);
+      TermsEnum te = q.getTermsEnum(terms, atts);
+      assertNotNull(te);
+      assertSame(
+          "automata array must be shared across segments",
+          expected,
+          atts.getAttribute(FuzzyTermsEnum.AutomatonAttribute.class).getAutomata());
+    }
+
+    assertEquals(
+        "second computeAutomataRamBytes on primed atts must not rebuild",
+        preflightBytes,
+        q.computeAutomataRamBytes(atts));
+    assertSame(
+        "automata array identity must be preserved after subsequent computeAutomataRamBytes",
+        expected,
+        atts.getAttribute(FuzzyTermsEnum.AutomatonAttribute.class).getAutomata());
+
+    reader.close();
+    directory.close();
+  }
+
+  public void testInFlightObservationViaSubclass() throws Exception {
+    Directory directory = newDirectory();
+    RandomIndexWriter writer = new RandomIndexWriter(random(), directory);
+    addDoc("hello", writer);
+    addDoc("help", writer);
+    addDoc("world", writer);
+    IndexReader reader = writer.getReader();
+    IndexSearcher searcher = newSearcher(reader);
+    writer.close();
+
+    AtomicLong observedBytes = new AtomicLong(-1L);
+    AtomicReference<CompiledAutomaton[]> observedArray = new AtomicReference<>();
+
+    class ObservingFuzzyQuery extends FuzzyQuery {
+      ObservingFuzzyQuery(Term t) {
+        super(t, 2);
+      }
+
+      @Override
+      protected TermsEnum getTermsEnum(Terms terms, AttributeSource atts) throws IOException {
+        TermsEnum te = super.getTermsEnum(terms, atts);
+        CompiledAutomaton[] before =
+            atts.getAttribute(FuzzyTermsEnum.AutomatonAttribute.class).getAutomata();
+        long bytes = computeAutomataRamBytes(atts);
+        CompiledAutomaton[] after =
+            atts.getAttribute(FuzzyTermsEnum.AutomatonAttribute.class).getAutomata();
+        assertSame("observation must not rebuild automata", before, after);
+        observedBytes.compareAndSet(-1L, bytes);
+        observedArray.compareAndSet(null, after);
+        return te;
+      }
+    }
+
+    Term term = new Term("field", "hello");
+    TopDocs observedHits = searcher.search(new ObservingFuzzyQuery(term), 10);
+
+    long expected = new FuzzyQuery(term, 2).computeAutomataRamBytes(new AttributeSource());
+
+    assertEquals("subclass observation matches a fresh pre-flight", expected, observedBytes.get());
+    assertNotNull(observedArray.get());
+
+    TopDocs vanillaHits = searcher.search(new FuzzyQuery(term, 2), 10);
+    assertEquals(vanillaHits.totalHits.value(), observedHits.totalHits.value());
+
+    reader.close();
+    directory.close();
   }
 
   private void addDoc(String text, RandomIndexWriter writer) throws IOException {

@@ -88,6 +88,15 @@ API Changes
   Also removed QueryParserBase.setDeterminizeWorkLimit/getDeterminizeWorkLimit, which are
   no longer needed. (Dimitris Rempapis)
 
+* GITHUB#xxxxx: FuzzyQuery now implements Accountable. Its ramBytesUsed() is a stable value that accounts
+  only for the state retained by the query object itself (its Term and primitive fields); it
+  does not include the Levenshtein automata, which are built per-search on FuzzyTermsEnum and
+  are not retained by the FuzzyQuery. A new public method computeAutomataRamBytes(AttributeSource)
+  exposes the transient automata cost by storing the built automata on the supplied
+  AttributeSource, so a subsequent getTermsEnum(terms, atts) on the same AttributeSource reuses
+  them. (Dimitris Rempapis)
+
+
 New Features
 ---------------------
 * GITHUB#15505: Upgrade snowball to 2d2e312df56f2ede014a4ffb3e91e6dea43c24be. New stemmer: PolishStemmer (and

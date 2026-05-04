@@ -22,7 +22,9 @@ import org.apache.lucene.index.SingleTermsEnum;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.AttributeSource;
+import org.apache.lucene.util.RamUsageEstimator;
 import org.apache.lucene.util.automaton.CompiledAutomaton;
 import org.apache.lucene.util.automaton.LevenshteinAutomata;
 
@@ -49,7 +51,7 @@ import org.apache.lucene.util.automaton.LevenshteinAutomata;
  * FuzzyQuery on term "abcd" with maxEdits=2 will not match an indexed term "ab", and FuzzyQuery on
  * term "a" with maxEdits=2 will not match an indexed term "abc".
  */
-public class FuzzyQuery extends MultiTermQuery {
+public class FuzzyQuery extends MultiTermQuery implements Accountable {
 
   public static final int defaultMaxEdits = LevenshteinAutomata.MAXIMUM_SUPPORTED_DISTANCE;
   public static final int defaultPrefixLength = 0;
@@ -249,6 +251,54 @@ public class FuzzyQuery extends MultiTermQuery {
         && maxExpansions == other.maxExpansions
         && transpositions == other.transpositions
         && Objects.equals(term, other.term);
+  }
+
+  /**
+   * Returns the RAM bytes retained by this query object itself.
+   *
+   * <p>This value is stable for the lifetime of the query: it accounts only for the query's own
+   * fields (including the {@link Term}) and does <em>not</em> include the Levenshtein automata that
+   * may be built at search time, because those automata are not retained by the {@code FuzzyQuery}
+   * — they live on the {@link AttributeSource} associated with an in-flight search (see {@link
+   * FuzzyTermsEnum}). For the transient automata cost, use {@link
+   * #computeAutomataRamBytes(AttributeSource)}.
+   */
+  @Override
+  public long ramBytesUsed() {
+    return RamUsageEstimator.shallowSizeOfInstance(getClass()) + term.ramBytesUsed();
+  }
+
+  /**
+   * Returns the aggregate RAM cost, in bytes, of the Levenshtein automata used to execute this
+   * query, building them if necessary and storing them on the supplied {@link AttributeSource}
+   * using the same sharing mechanism that {@link FuzzyTermsEnum} uses across segments. A subsequent
+   * call to {@link #getTermsEnum(Terms, AttributeSource)} with the same {@code atts} will reuse the
+   * automata instead of building them a second time.
+   *
+   * <p>This is deliberately <em>not</em> part of {@link Accountable#ramBytesUsed()} because the
+   * automata are not retained by this {@code FuzzyQuery}; they live per-search on {@code atts}.
+   *
+   * <p>This method does not mutate this {@code FuzzyQuery}. Any state it writes lives on {@code
+   * atts}, which is expected to be search-scoped.
+   *
+   * <p>Returns {@code 0L} when {@code maxEdits == 0}; the attribute is not initialized in that
+   * case.
+   */
+  public long computeAutomataRamBytes(AttributeSource atts) {
+    if (maxEdits == 0) {
+      return 0L;
+    }
+
+    atts.addAttributeImpl(new FuzzyTermsEnum.AutomatonAttributeImpl());
+    FuzzyTermsEnum.AutomatonAttribute aa =
+        atts.addAttribute(FuzzyTermsEnum.AutomatonAttribute.class);
+    aa.init(() -> new FuzzyAutomatonBuilder(term.text(), maxEdits, prefixLength, transpositions));
+
+    long sum = 0L;
+    for (CompiledAutomaton ca : aa.getAutomata()) {
+      sum += ca.ramBytesUsed();
+    }
+    return sum;
   }
 
   /**
