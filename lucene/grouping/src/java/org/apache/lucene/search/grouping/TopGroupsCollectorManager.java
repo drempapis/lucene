@@ -17,7 +17,6 @@
 package org.apache.lucene.search.grouping;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.function.Supplier;
@@ -36,7 +35,6 @@ public class TopGroupsCollectorManager<T>
   private final int maxDocsPerGroup;
   private final boolean getMaxScores;
   private final TopGroups.ScoreMergeMode scoreMergeMode;
-  private final List<TopGroupsCollector<T>> collectors;
 
   /**
    * Creates a new TopGroupsCollectorManager.
@@ -97,21 +95,17 @@ public class TopGroupsCollectorManager<T>
     this.maxDocsPerGroup = maxDocsPerGroup;
     this.getMaxScores = getMaxScores;
     this.scoreMergeMode = scoreMergeMode;
-    this.collectors = new ArrayList<>();
   }
 
   @Override
   public TopGroupsCollector<T> newCollector() throws IOException {
-    TopGroupsCollector<T> collector =
-        new TopGroupsCollector<>(
-            groupSelectorFactory.get(),
-            searchGroups,
-            groupSort,
-            sortWithinGroup,
-            withinGroupOffset + maxDocsPerGroup,
-            getMaxScores);
-    collectors.add(collector);
-    return collector;
+    return new TopGroupsCollector<>(
+        groupSelectorFactory.get(),
+        searchGroups,
+        groupSort,
+        sortWithinGroup,
+        withinGroupOffset + maxDocsPerGroup,
+        getMaxScores);
   }
 
   @Override
